@@ -1,44 +1,55 @@
 version: 2.1
-setup: true
-orbs:
-  orb-tools: circleci/orb-tools@11.1
-  shellcheck: circleci/shellcheck@3.1
+jobs:
+  build_and_test: # this can be any name you choose
+    docker:
+      - image: cimg/python:3.10.1
+        environment:
+          DATABASE_URL: postgresql://root@localhost/circle_test?sslmode=disable
+      - image: circleci/postgres:9.6.2
+        environment:
+          POSTGRES_USER: root
+          POSTGRES_DB: circle_test
+    steps:
+      - checkout
+      - python/install-packages:
+          pkg-manager: pipenv
+      - run:
+          name: Run tests
+          command: pipenv run python manage.py test
+      - store_test_results:
+          path: test-results
+      - store_artifacts:
+          path: test-results
+          destination: tr1
+      - persist_to_workspace:
+          root: ~/project
+          paths:
+            - .
+ 
+  deploy:
+    docker:
+      - image: cimg/python:3.10.1
+    steps:
+      - attach_workspace:
+          at: ~/project
+      - heroku/deploy-via-git: 
+          force: true
 
 workflows:
-  lint-pack:
+  on_commit:
     jobs:
-      - orb-tools/lint:
+      - build_and_test
+
+  nightly:
+    triggers:
+      - schedule:
+          cron: "0 0 * * *"       
           filters:
-            tags:
-              only: /.*/
-      - orb-tools/pack:
-          filters:
-            tags:
-              only: /.*/
-      - orb-tools/review:
-          filters:
-            tags:
-              only: /.*/
-      - shellcheck/check:
-          exclude: SC2148,SC2001,SC1091,SC2086,SC2116,SC2046,SC2005,SC2002
-          filters:
-            tags:
-              only: /.*/
-      - orb-tools/publish:
-          orb-name: circleci/slack
-          vcs-type: << pipeline.project.type >>
-          requires:
-            [orb-tools/lint, orb-tools/review, orb-tools/pack, shellcheck/check]
-          # Use a context to hold your publishing token.
-          context: orb-publishing
-          filters:
-            tags:
-              only: /.*/
-      # Triggers the next workflow in the Orb Development Kit.
-      - orb-tools/continue:
-          pipeline-number: << pipeline.number >>
-          vcs-type: << pipeline.project.type >>
-          requires: [orb-tools/publish]
-          filters:
-            tags:
-              only: /.*/
+            branches:
+              only:
+                - master
+    jobs:
+      - build_and_test
+
+
+
